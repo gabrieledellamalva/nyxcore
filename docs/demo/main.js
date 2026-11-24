@@ -1,11 +1,15 @@
 // NYXCORE loop view. Two fields of the same forests: a standard transformer on the left, a looped one on the right.
 // A tree lights up as the model solves it. Tree shapes, depths and "solved" flags all come from `nyxcore loop-export`.
-// Keys: space pause · left/right step · R restart · H hide all text.
+// Keys: space pause · left/right step · R restart · H hide all text. Add ?still to the URL for a motionless final frame.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
 
 const $ = (id) => document.getElementById(id);
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const query = new URLSearchParams(location.search);
+// ?still shows the finished state with no motion (also what reduced-motion users get); &angle=0.2 turns the camera
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches || query.has('still');
+if (query.has('still')) document.body.classList.add('still');
+if (parseFloat(query.get('ui')) > 0) document.documentElement.style.setProperty('--ui', parseFloat(query.get('ui'))); // ?ui=1.6 enlarges all text
 const pct = (v) => Math.round(v * 100);
 const pct1 = (v) => (v * 100).toFixed(1);
 
@@ -227,7 +231,10 @@ function frameDistance() { // far enough to hold both fields whatever the window
   const horizontal = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
   return Math.max(halfWidth / Math.tan(horizontal), (TOP * 1.05) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
 }
-camera.position.set(0, TOP * 0.5, frameDistance());
+{
+  const angle = parseFloat(query.get('angle') || '0') || 0, distance = frameDistance() * (1 + 0.7 * Math.abs(angle));
+  camera.position.set(Math.sin(angle) * distance, TOP * 0.5, Math.cos(angle) * distance);
+}
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
@@ -238,7 +245,7 @@ renderer.setAnimationLoop(() => {
   uniforms.uMix.value = Math.min(1, state.mix);
   readout(state.from + (state.to - state.from) * Math.min(1, state.mix));
   if (autoCamera) {
-    const t = uniforms.uClock.value, angle = Math.sin(t * 0.13) * 0.24, distance = frameDistance() * (1 + 0.03 * Math.sin(t * 0.09));
+    const t = uniforms.uClock.value, angle = Math.sin(t * 0.13) * 0.24, distance = frameDistance() * (1 + 0.7 * Math.abs(angle) + 0.02 * Math.sin(t * 0.09));
     camera.position.set(Math.sin(angle) * distance, TOP * (0.5 + 0.05 * Math.sin(t * 0.11)), Math.cos(angle) * distance);
     camera.lookAt(focus);
   } else controls.update();

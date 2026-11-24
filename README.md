@@ -6,7 +6,7 @@
 
 [![Test](https://github.com/gabrieledellamalva/nyxcore/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrieledellamalva/nyxcore/actions/workflows/ci.yml)
 
-Alpha. Python 3.11+. Everything runs on one laptop.
+**[Open the live scene](https://gabrieledellamalva.github.io/nyxcore/demo/)** · Alpha. Python 3.11+. Everything runs on one laptop.
 
 ## Loop: depth is the bottleneck
 
@@ -47,7 +47,7 @@ uv run nyxcore loop-export --figure docs/results.svg
 uv run nyxcore serve --atlas data/atlas
 ```
 
-In the scene each light is a tree node, its height is its depth, and it is lit when the model's own output layer, read at that point of the computation, already names the right root. The sheet marks the deepest tree seen in training. Keys: space pauses, arrows step, R restarts, H hides all text.
+In the scene each light is a tree node, its height is its depth, and it is lit when the model's own output layer, read at that point of the computation, already names the right root. The sheet marks the deepest tree seen in training. Keys: space pauses, arrows step, R restarts, H hides all text. Add `?ui=1.6` to the address to enlarge the text for a recording, or `?still` for a motionless final frame.
 
 This is a toy algorithmic task on models under 2M parameters. It says nothing about how GLM-5.4 or any production model behaves.
 
