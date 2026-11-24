@@ -4,6 +4,8 @@ version = "0.3.0a1"
 description = "Flight recorder, canary probes and a 3D context atlas for AI agents — local models vs frontier."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Gabriele Della Malva" }]
 dependencies = [
   "httpx>=0.27",
   "numpy>=1.26",

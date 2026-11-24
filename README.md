@@ -105,4 +105,4 @@ Any OpenAI-compatible endpoint works as `openai:<model>` with `OPENAI_API_KEY` a
 
 ## License
 
-No license has been chosen yet, so default copyright applies. One will be added before the first tagged release.
+MIT. See [LICENSE](LICENSE). The bundled copy of three.js under `src/nyxcore/web/vendor` is also MIT and keeps its own license file there.
