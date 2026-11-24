@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NYXCORE — Context</title>
+<link rel="icon" href="./logo.svg">
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/":"./vendor/"}}</script>
+</head>
+<body>
+<canvas id="scene" aria-label="3D atlas of recorded agent runs"></canvas>
+<div id="pins" aria-hidden="true"></div>
+
+<header class="brand">
+  <h1><img src="./logo.svg" alt="">NYXCORE</h1>
+  <p id="summary">Loading atlas…</p>
+</header>
+<nav class="views"><a href="./">Loop</a><a href="./atlas.html" class="on">Context</a></nav>
+
+<form id="search" class="panel search" role="search">
+  <input id="q" type="search" placeholder="Search in space — e.g. “send report to external audit”" autocomplete="off" aria-label="Search recorded steps">
+  <button type="submit">Locate</button>
+  <ol id="hits" hidden></ol>
+</form>
+
+<aside class="panel left" aria-label="Models and results">
+  <h2>Models</h2>
+  <ul id="models"></ul>
+  <h2>Canary recall vs context demand</h2>
+  <svg id="chart" viewBox="0 0 260 130" role="img" aria-label="Recall by context demand per model"></svg>
+  <p class="note">Height in the scene is context demand. The red plane is the window limit: tokens above it were sent but dropped.</p>
+  <h2>Colour by</h2>
+  <div class="seg" id="colour">
+    <button data-mode="model" class="on">Model</button>
+    <button data-mode="outcome">Outcome</button>
+    <button data-mode="speed">Speed</button>
+  </div>
+  <div id="legend"></div>
+  <label class="check"><input type="checkbox" id="showPins" checked> Pins</label>
+</aside>
+
+<aside class="panel right" id="inspector" hidden aria-label="Selected run">
+  <button id="close" aria-label="Close">×</button>
+  <p class="eyebrow" id="epModel"></p>
+  <h2 id="epTitle"></h2>
+  <div id="badges"></div>
+  <ol id="stepList"></ol>
+  <div id="stepDetail"></div>
+</aside>
+
+<footer class="panel timeline">
+  <button id="play" aria-label="Play memory walk">▶</button>
+  <input id="time" type="range" min="0" max="1000" value="1000" aria-label="Time">
+  <span id="timeLabel">All runs</span>
+</footer>
+
+<p id="hint" hidden></p>
+<script type="module" src="./atlas.js"></script>
+</body>
+</html>

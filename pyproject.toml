@@ -1,0 +1,32 @@
+[project]
+name = "nyxcore"
+version = "0.3.0a1"
+description = "Flight recorder, canary probes and a 3D context atlas for AI agents — local models vs frontier."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "numpy>=1.26",
+  "scikit-learn>=1.4",
+  "starlette>=0.37",
+  "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+loop = ["torch>=2.3"]
+
+[project.scripts]
+nyxcore = "nyxcore.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nyxcore"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

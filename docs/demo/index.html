@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NYXCORE</title>
+<link rel="icon" href="./logo.svg">
+<link rel="stylesheet" href="./hero.css">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/":"./vendor/"}}</script>
+</head>
+<body>
+<canvas id="scene" aria-label="Two transformers solving the same forests: a standard one and a looped one"></canvas>
+
+<header class="brand"><img src="./logo.svg" alt=""><span>NYXCORE</span></header>
+<nav class="views"><a href="./" class="on">Loop</a><a href="./atlas.html">Context</a></nav>
+
+<div class="finale" id="finale" aria-live="polite"></div>
+
+<section class="stat a" aria-label="Standard transformer">
+  <p class="label">Standard</p>
+  <p class="value"><span id="aValue">0</span><i>%</i></p>
+  <p class="meta" id="aMeta"></p>
+  <p class="phase" id="aPhase"></p>
+</section>
+<section class="stat b" aria-label="Looped transformer">
+  <p class="label">Looped</p>
+  <p class="value"><span id="bValue">0</span><i>%</i></p>
+  <p class="meta" id="bMeta"></p>
+  <p class="phase" id="bPhase"></p>
+</section>
+
+<p class="caption" id="caption">Each light is a node of a tree · height is the lookups it needs · lit means solved · the sheet is the deepest tree seen in training</p>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
