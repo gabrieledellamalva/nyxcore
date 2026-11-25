@@ -50,7 +50,8 @@ def collect(runs: str | Path) -> dict[str, Any]:
         for cond in entry["conditions"].values():
             cond["rate"] = wilson(cond["failed"], cond["n"])
     window = next((e.task.get("context_window") for e in episodes), None)
-    return {"context_window": window, "models": models}
+    ordered = dict(sorted(models.items(), key=lambda item: (not item[1]["pinned"], item[0])))
+    return {"context_window": window, "models": ordered}
 
 
 def markdown_table(runs: str | Path) -> str:
@@ -66,14 +67,15 @@ def markdown_table(runs: str | Path) -> str:
                 cells.append("–")
                 continue
             r = cond["rate"]
-            cells.append(f"{cond['failed']}/{cond['n']} ({r['lo']:.0%}–{r['hi']:.0%})")
-        lines.append(f"| `{model}` | " + " | ".join(cells) + " |")
+            mark = " †" if c == "overflow" and not entry["pinned"] else ""
+            cells.append(f"{cond['failed']}/{cond['n']} ({r['lo']:.0%}–{r['hi']:.0%}){mark}")
+        lines.append(f"| `{model}`{'' if entry['pinned'] else ' (hosted)'} | " + " | ".join(cells) + " |")
     notes = []
     for model, entry in data["models"].items():
         over = entry["conditions"].get("overflow")
         extra = []
         if over:
-            extra.append(f"context silently truncated in {over['truncated']}/{over['n']} long-record runs" if entry["pinned"] else "window not pinned: the long record fits, so nothing was truncated")
+            extra.append(f"context silently truncated in {over['truncated']}/{over['n']} long-record runs" if entry["pinned"] else "† window not pinned: the long record fits, so that cell is not a truncation test")
         if entry["errors"]:
             extra.append(f"{entry['errors']} run(s) ended on a provider error")
         if entry["refused"]:
@@ -125,7 +127,10 @@ def figure_svg(runs: str | Path, logo_path: str | Path | None = None) -> str:
             colour = palette[mi % len(palette)]
             parts.append(f'<rect x="{x0}" y="{by:.1f}" width="{x1 - x0}" height="{bar_h:.1f}" fill="#11151b"/>')
             parts.append(f'<rect x="{x0}" y="{by:.1f}" width="{max(2.0, rate * (x1 - x0)):.1f}" height="{bar_h:.1f}" fill="{colour}"/>')
-            parts.append(f'<text x="{x1 + 12}" y="{by + bar_h * 0.72:.1f}" fill="{colour}" font-size="14" font-weight="600">{cond["failed"]}/{cond["n"]}</text>')
+            dagger = " †" if name == "overflow" and not data["models"][model]["pinned"] else ""
+            parts.append(f'<text x="{x1 + 12}" y="{by + bar_h * 0.72:.1f}" fill="{colour}" font-size="14" font-weight="600">{cond["failed"]}/{cond["n"]}{dagger}</text>')
+    if any(not data["models"][m]["pinned"] for m in models):
+        parts.append(f'<text x="{L}" y="{H - 24}" fill="{dim}" font-size="13">† Hosted model: the record fits its own context window, so nothing is truncated. Not a window test.</text>')
     lx = L
     for mi, model in enumerate(models):
         colour = palette[mi % len(palette)]

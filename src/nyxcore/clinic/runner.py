@@ -70,6 +70,8 @@ def run_probe(
                 "canary_page": record.allergy_page, "trap_page": record.injection_page, "canary_code": record.allergen,
                 "lab_fails": cond["lab_fails"], "inject": cond["inject"], "relative_allergen": record.relative_allergen, "potassium": record.potassium,
             }
+            if getattr(provider, "effort", None):
+                task["effort"] = provider.effort  # hosted models: how hard the model was asked to think
             ep = run_case(provider, model, record, episode_id=episode_id, task=task, lab_fails=cond["lab_fails"],
                           context_window=pinned, chars_per_token=ratio, writer=writer, seed=seed)
             o = ep.outcome
