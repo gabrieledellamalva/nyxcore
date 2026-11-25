@@ -13,7 +13,11 @@ const el = (tag, cls, text) => {
 const pct = (v) => `${Math.round(v * 100)}%`;
 const fmt = (v) => (v == null ? '–' : new Intl.NumberFormat('en-US').format(v));
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const query = new URLSearchParams(location.search);
+const capture = query.has('capture'); // offline rendering: no clock, frames are produced by nyx.seek(seconds)
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches || capture;
+if (parseFloat(query.get('ui')) > 0) document.documentElement.style.setProperty('--ui', parseFloat(query.get('ui'))); // ?ui=1.6 enlarges all text
+if (capture) document.body.classList.add('capture');
 
 const MODEL_COLOURS = ['#5ad1ff', '#b693ff', '#ff9e5a', '#7dffb0', '#ff7eb6', '#d7e36b'];
 const CANARY = new THREE.Color('#bdfc23');
@@ -40,7 +44,7 @@ const state = { sel: -1, selTime: 1, time: 1, playing: false, mode: 'model', hid
 
 // ---------------------------------------------------------------- scene
 const canvas = $('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: capture });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
@@ -218,7 +222,7 @@ function rebuildPaths() {
 const markerMaterial = new THREE.ShaderMaterial({
   uniforms, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
   vertexShader: /* glsl */ `
-    uniform float uPx, uSel, uClock, uAssemble;
+    uniform float uPx, uSel, uClock, uAssemble, uTime;
     attribute vec3 aColor;
     attribute float aKind, aEp;
     varying vec3 vC;
@@ -226,7 +230,7 @@ const markerMaterial = new THREE.ShaderMaterial({
     void main() {
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
       bool sel = abs(aEp - uSel) < 0.5;
-      vA = ((uSel < -0.5 || sel || aKind > 1.5) ? 1.0 : 0.1) * smoothstep(0.75, 1.0, uAssemble);
+      vA = ((uSel < -0.5 || sel || aKind > 1.5) ? 1.0 : 0.1) * smoothstep(0.75, 1.0, uAssemble) * (aKind > 1.5 ? 1.0 : smoothstep(0.86, 1.0, uTime)); // canary and trap marks wait for their column
       vC = aColor; vK = aKind;
       float base = clamp(uPx * 330.0 / -mv.z, 6.0 * uPx, 30.0 * uPx);
       gl_PointSize = base * (aKind > 1.5 ? 0.62 : 1.0) * (1.0 + 0.1 * sin(uClock * 3.0 + aEp));
@@ -319,7 +323,7 @@ function updatePins() {
     if (visible) p.node.style.transform = `translate3d(${x}px, ${y}px, 0) ${p.anchor}`;
   }
 }
-atlas.clusters.forEach((c) => addPin('static', 'district', c.label, new THREE.Vector3(c.x, -0.8, c.z)));
+if (!capture) atlas.clusters.forEach((c) => addPin('static', 'district', c.label, new THREE.Vector3(c.x, -0.8, c.z)));
 addPin('static', 'limit', `context limit · ${fmt(windowTokens)} tokens`, new THREE.Vector3(-span / 2 + 6, H, span / 2 - 6));
 
 // ---------------------------------------------------------------- camera moves
@@ -611,8 +615,62 @@ recolour();
 syncTimeline();
 if (!reducedMotion) flyTo(HOME.pos, HOME.target, 3.2);
 
+// ---------------------------------------------------------------- frame-exact rendering (?capture)
+// The scene as a function of time: columns grow as context fills, colours switch from model to outcome,
+// then the closing line fades in. The camera circles and rises until the window limit is seen from above.
+const SHOT = { growStart: 0.6, growEnd: 7.6, outcomeAt: 9.2, closeAt: 11.4, length: 16 };
+function setMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode;
+  document.querySelectorAll('#colour button').forEach((x) => x.classList.toggle('on', x.dataset.mode === mode));
+  recolour();
+  renderLegend();
+}
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+function shotCamera(t) {
+  const angle = 0.5 + 0.055 * t, radius = (camera.aspect < 1 ? 106 : 86) * (1.12 - 0.12 * ease(clamp01(t / 4)));
+  camera.position.set(Math.sin(angle) * radius, 13 + 25 * ease(clamp01(t / SHOT.length)), Math.cos(angle) * radius);
+  camera.lookAt(HOME.target);
+  camera.updateMatrixWorld();
+}
+function seek(t) {
+  uniforms.uClock.value = t;
+  state.time = clamp01((t - SHOT.growStart) / (SHOT.growEnd - SHOT.growStart));
+  uniforms.uTime.value = state.time;
+  setMode(t < SHOT.outcomeAt ? 'model' : 'outcome');
+  shotCamera(t);
+  const shown = clamp01(t - SHOT.closeAt);
+  $('finale').style.opacity = shown;
+  $('finale').style.transform = `translate(-50%, ${8 * (1 - shown)}px)`;
+  renderer.render(scene, camera);
+  updatePins();
+}
+if (capture) {
+  const total = (pick) => models.reduce((sum, m) => sum + pick(m.stats), 0);
+  const over = models.flatMap((m) => m.stats.by_fill.filter((r) => r.truncated && r.truncated.k > 0)); // levels where the task outgrew the window
+  const lost = over.reduce((sum, r) => sum + r.recall.n - r.recall.k, 0), runs = over.reduce((sum, r) => sum + r.recall.n, 0);
+  const line = el('b');
+  line.append(el('em', '', String(total((s) => s.trap.k))), ` of ${total((s) => s.trap.n)} agent runs obeyed a planted instruction`);
+  $('finale').append(line, el('span', '', `where the task outgrew the context window, ${lost} of ${runs} lost the fact they needed`));
+  // leave room for the panel: beside the scene in landscape, under it in portrait
+  const portrait = innerWidth < innerHeight;
+  camera.setViewOffset(innerWidth, innerHeight, portrait ? 0 : -Math.round(innerWidth * 0.11), portrait ? Math.round(innerHeight * 0.1) : -Math.round(innerHeight * 0.08), innerWidth, innerHeight);
+  // pin the "context limit" label to the ceiling corner that sits furthest right at mid-shot, clear of the panel
+  const limitPin = pins.find((pin) => pin.node.classList.contains('limit'));
+  shotCamera(SHOT.length / 2);
+  let best = null;
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const corner = new THREE.Vector3(sx * (span / 2 - 6), H, sz * (span / 2 - 6));
+    projected.copy(corner).project(camera);
+    if (projected.z < 1 && projected.x < 0.8 && (!best || projected.x > best.x)) best = { x: projected.x, corner };
+  }
+  if (limitPin && best) limitPin.pos.copy(best.corner);
+  window.nyx = { seek, ready: true, duration: SHOT.length };
+  seek(parseFloat(query.get('t')) || 0);
+}
+
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
+if (!capture) renderer.setAnimationLoop(() => {
   const real = Math.min(clock.getDelta(), 1.5); // intro and camera moves keep wall-clock pace on slow frames
   const dt = Math.min(real, 0.1);
   uniforms.uClock.value += dt;

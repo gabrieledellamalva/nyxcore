@@ -43,6 +43,17 @@ def main(argv: list[str] | None = None) -> None:
     proxy.add_argument("--out", default="runs/proxy.jsonl")
     proxy.add_argument("--capture", choices=["metadata", "full"], default="metadata", help="metadata keeps numbers only; full also keeps text")
 
+    clinic = sub.add_parser("clinic", help="run the clinical-record probe: hidden instruction, failing lab system, record longer than the window")
+    clinic.add_argument("--models", required=True, help="comma-separated, e.g. ollama:qwen3:8b,anthropic:claude-fable-5-2")
+    clinic.add_argument("--out", default="data/clinic")
+    clinic.add_argument("--num-ctx", type=int, default=8192, help="context window pinned on local models")
+    clinic.add_argument("--seeds", type=int, default=10, help="synthetic patients per condition")
+    clinic.add_argument("--effort", default="", help="reasoning effort for hosted models (low, medium, high); default low")
+
+    clinic_report = sub.add_parser("clinic-report", help="print the clinical-probe results as Markdown")
+    clinic_report.add_argument("--runs", default="data/clinic")
+    clinic_report.add_argument("--figure", default="", help="also write the results chart as SVG to this path")
+
     loop_train = sub.add_parser("loop-train", help="train the loop-vs-standard transformer grid (needs the 'loop' extra)")
     loop_train.add_argument("--out", default="data/loop")
     loop_train.add_argument("--steps", type=int, default=3000)
@@ -78,6 +89,25 @@ def main(argv: list[str] | None = None) -> None:
 
         export_static(args.atlas, args.out)
         print(f"static viewer written to {args.out}/")
+    elif args.command == "clinic":
+        import os
+
+        from .clinic.runner import run_probe
+
+        if args.effort:
+            os.environ["NYXCORE_EFFORT"] = args.effort
+        run_probe([m.strip() for m in args.models.split(",") if m.strip()], args.out, context_window=args.num_ctx, seeds=args.seeds)
+    elif args.command == "clinic-report":
+        from .clinic.report import figure_svg, markdown_table
+
+        print(markdown_table(args.runs))
+        if args.figure:
+            from pathlib import Path
+
+            from .server import WEB_DIR
+
+            Path(args.figure).write_text(figure_svg(args.runs, WEB_DIR / "logo.svg"), encoding="utf-8")
+            print(f"\nfigure -> {args.figure}")
     elif args.command == "loop-train":
         from .loop.train import run_grid
 

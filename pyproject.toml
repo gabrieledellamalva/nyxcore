@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 loop = ["torch>=2.3"]
+hosted = ["anthropic>=2"]
 
 [project.scripts]
 nyxcore = "nyxcore.cli:main"

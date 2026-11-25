@@ -24,6 +24,10 @@ class ToolCall:
     args: dict[str, Any]
 
 
+class ProviderFatal(RuntimeError):
+    """The run cannot continue with this provider at all: bad credentials, unknown model, missing SDK."""
+
+
 @dataclass(slots=True)
 class ChatResult:
     text: str
@@ -34,10 +38,12 @@ class ChatResult:
     latency_s: float = 0.0
     tokens_per_s: float | None = None
     done_reason: str | None = None
+    raw: Any = None  # provider-native assistant content, replayed unchanged on the next request when a provider needs it
 
 
 class Provider(Protocol):
     name: str
+    pins_context: bool  # True when the provider holds the model to the context window we ask for
 
     def chat(
         self,
@@ -68,6 +74,7 @@ class OllamaProvider:
     """Native Ollama API: the only local route that lets us pin ``num_ctx`` per request."""
 
     name = "ollama"
+    pins_context = True
 
     def __init__(self, base_url: str | None = None, timeout: float = 600.0) -> None:
         self.base_url = (base_url or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
@@ -152,6 +159,7 @@ class OpenAICompatProvider:
     """Any OpenAI-compatible endpoint (OpenAI, OpenRouter, vLLM, LM Studio, Anthropic's compat layer)."""
 
     name = "openai"
+    pins_context = False
 
     def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 600.0) -> None:
         self.base_url = (base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
@@ -210,9 +218,120 @@ class OpenAICompatProvider:
         return None
 
 
+class AnthropicProvider:
+    """Claude models through the official SDK.
+
+    Credentials are resolved by the SDK from the environment; this code never reads or
+    prints a key. The hosted model uses its own context window, so nothing is pinned.
+    Thinking is left to the model (it cannot be disabled on current models) and its
+    depth is set with ``effort``. Refusal fallbacks are deliberately not enabled: a
+    benchmark has to know which model answered, so a refusal is recorded as a refusal.
+    """
+
+    name = "anthropic"
+    pins_context = False
+
+    def __init__(self, client: Any = None, effort: str | None = None, max_tokens: int = 8000) -> None:
+        if client is None:
+            try:
+                import anthropic
+            except ImportError as exc:
+                raise ProviderFatal("the Anthropic SDK is not installed: run `uv sync --extra hosted`") from exc
+            client = anthropic.Anthropic()
+        self._client = client
+        self.effort = effort or os.environ.get("NYXCORE_EFFORT") or "low"
+        self.max_tokens = max_tokens
+
+    @staticmethod
+    def _tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"]["parameters"]} for t in tools]
+
+    @staticmethod
+    def _render(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+        system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        out: list[dict[str, Any]] = []
+        for m in messages:
+            if m["role"] == "system":
+                continue
+            if m["role"] == "assistant":
+                if m.get("raw") is not None:
+                    content = m["raw"]  # the model's own blocks, thinking included, exactly as it produced them
+                else:
+                    content = [{"type": "text", "text": m["content"]}] if m.get("content") else []
+                    content += [{"type": "tool_use", "id": c.id, "name": c.name, "input": c.args} for c in m.get("tool_calls") or []]
+                out.append({"role": "assistant", "content": content})
+            elif m["role"] == "tool":
+                block = {"type": "tool_result", "tool_use_id": m.get("tool_call_id", ""), "content": m["content"]}
+                last = out[-1] if out else None
+                if last and last["role"] == "user" and isinstance(last["content"], list) and last["content"][-1].get("type") == "tool_result":
+                    last["content"].append(block)  # every result of one turn travels in a single user message
+                else:
+                    out.append({"role": "user", "content": [block]})
+            else:
+                out.append({"role": "user", "content": m["content"]})
+        return system, out
+
+    def chat(self, model, messages, tools=None, *, context_window=None, temperature=0.0, seed=None, max_tokens=512):
+        import anthropic
+
+        system, rendered = self._render(messages)
+        request: dict[str, Any] = {
+            "model": model, "max_tokens": self.max_tokens, "messages": rendered,
+            "cache_control": {"type": "ephemeral"}, "output_config": {"effort": self.effort},
+        }
+        if system:
+            request["system"] = system
+        if tools:
+            request["tools"] = self._tools(tools)
+        t0 = time.perf_counter()
+        try:
+            response = self._client.messages.create(**request)
+        except anthropic.AuthenticationError as exc:
+            raise ProviderFatal("Anthropic rejected the credentials: check ANTHROPIC_API_KEY") from exc
+        except anthropic.PermissionDeniedError as exc:
+            raise ProviderFatal(f"these credentials cannot use {model}: {exc.message}") from exc
+        except anthropic.NotFoundError as exc:
+            raise ProviderFatal(f"Anthropic does not know the model {model!r}") from exc
+        except anthropic.BadRequestError as exc:
+            raise RuntimeError(f"anthropic 400: {exc.message}"[:300]) from exc
+        except anthropic.RateLimitError as exc:
+            raise RuntimeError("anthropic: rate limited after the SDK's retries") from exc
+        except anthropic.APIStatusError as exc:
+            raise RuntimeError(f"anthropic {exc.status_code}: {exc.message}"[:300]) from exc
+        except anthropic.APIConnectionError as exc:
+            raise RuntimeError("anthropic: network error") from exc
+        latency = time.perf_counter() - t0
+        usage = response.usage
+        prompt = sum(getattr(usage, key, 0) or 0 for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        completion = usage.output_tokens
+        if response.stop_reason == "refusal":
+            return ChatResult(text="", prompt_tokens=prompt, completion_tokens=completion, latency_s=latency, done_reason="refusal")
+        if response.stop_reason == "max_tokens":
+            raise RuntimeError("anthropic: the reply was cut off at max_tokens")
+        return ChatResult(
+            text="".join(b.text for b in response.content if b.type == "text"),
+            tool_calls=[ToolCall(b.id, b.name, dict(b.input)) for b in response.content if b.type == "tool_use"],
+            prompt_tokens=prompt, completion_tokens=completion, latency_s=latency,
+            tokens_per_s=(completion / latency) if completion and latency else None,  # wall-clock: includes network and thinking
+            done_reason=response.stop_reason, raw=response.content,
+        )
+
+    def count_tokens(self, model: str, text: str) -> int | None:
+        import anthropic
+
+        try:
+            return self._client.messages.count_tokens(model=model, messages=[{"role": "user", "content": text}]).input_tokens
+        except anthropic.AuthenticationError as exc:
+            raise ProviderFatal("Anthropic rejected the credentials: check ANTHROPIC_API_KEY") from exc
+        except anthropic.APIError:
+            return None
+
+
 def resolve(spec: str) -> tuple[Provider, str]:
     """``"ollama:qwen3:8b"`` -> (OllamaProvider, "qwen3:8b"). A bare name means Ollama."""
     kind, _, model = spec.partition(":")
+    if kind == "anthropic" and model:
+        return AnthropicProvider(), model
     if kind == "ollama" and model:
         return OllamaProvider(), model
     if kind == "openai" and model:

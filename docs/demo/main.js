@@ -8,7 +8,8 @@ const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 // ?still shows the finished state with no motion (also what reduced-motion users get); &angle=0.2 turns the camera
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches || query.has('still');
-if (query.has('still')) document.body.classList.add('still');
+const capture = query.has('capture'); // offline rendering: no clock, frames are produced by nyx.seek(seconds)
+if (query.has('still') || capture) document.body.classList.add('still');
 if (parseFloat(query.get('ui')) > 0) document.documentElement.style.setProperty('--ui', parseFloat(query.get('ui'))); // ?ui=1.6 enlarges all text
 const pct = (v) => Math.round(v * 100);
 const pct1 = (v) => (v * 100).toFixed(1);
@@ -35,7 +36,7 @@ const SHEET = (view.train_depth + 0.5) * STEP;
 
 // ---------------------------------------------------------------- scene
 const canvas = $('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: capture });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(0x000000, 0);
 const scene = new THREE.Scene();
@@ -190,7 +191,7 @@ function readout(position) {
 
 // ---------------------------------------------------------------- sequence: lights out -> compute tick by tick -> hold
 const state = { from: 0, to: 0, mix: 0, playing: !reducedMotion, phase: 'run', hold: 0 };
-const TICK_SECONDS = 1.25, HOLD_SECONDS = 7, RESET_SECONDS = 1.6;
+const INTRO_SECONDS = 3.2, TICK_SECONDS = 1.25, HOLD_SECONDS = 7, RESET_SECONDS = 1.6;
 function setSegment(from, to) { state.from = from; state.to = to; state.mix = 0; fields.forEach((f) => load(f, from, to)); }
 function jump(tick) { state.playing = false; state.phase = 'run'; $('finale').classList.remove('on'); setSegment(tick, tick); }
 if (reducedMotion) { setSegment(T, T); $('finale').classList.add('on'); } else setSegment(0, 1);
@@ -236,19 +237,40 @@ function frameDistance() { // far enough to hold both fields whatever the window
   camera.position.set(Math.sin(angle) * distance, TOP * 0.5, Math.cos(angle) * distance);
 }
 
+function cameraAt(t) { // the slow sway of the automatic camera, as a function of time
+  const angle = Math.sin(t * 0.13) * 0.24, distance = frameDistance() * (1 + 0.7 * Math.abs(angle) + 0.02 * Math.sin(t * 0.09));
+  camera.position.set(Math.sin(angle) * distance, TOP * (0.5 + 0.05 * Math.sin(t * 0.11)), Math.cos(angle) * distance);
+  camera.lookAt(focus);
+}
+
+// The whole scene as a function of time, for frame-exact offline rendering:
+// intro, then one tick every TICK_SECONDS, then the closing line fades in.
+function seek(t) {
+  uniforms.uClock.value = t;
+  uniforms.uAssemble.value = Math.min(1, t / INTRO_SECONDS);
+  const k = Math.max(0, (t - INTRO_SECONDS) / TICK_SECONDS), a = Math.min(T - 1, Math.floor(k));
+  if (state.from !== a || state.to !== a + 1) setSegment(a, a + 1);
+  state.mix = Math.min(1, k - a);
+  uniforms.uMix.value = state.mix;
+  readout(state.from + state.mix);
+  const shown = Math.min(1, Math.max(0, t - INTRO_SECONDS - T * TICK_SECONDS));
+  $('finale').style.opacity = shown;
+  $('finale').style.transform = `translate(-50%, ${8 * (1 - shown)}px)`;
+  cameraAt(t);
+  renderer.render(scene, camera);
+}
+
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
+if (capture) seek(0);
+else renderer.setAnimationLoop(() => {
   const real = Math.min(clock.getDelta(), 1.5), dt = Math.min(real, 0.1);
   uniforms.uClock.value += dt;
-  if (uniforms.uAssemble.value < 1) uniforms.uAssemble.value = Math.min(1, uniforms.uAssemble.value + real / 3.2);
+  if (uniforms.uAssemble.value < 1) uniforms.uAssemble.value = Math.min(1, uniforms.uAssemble.value + real / INTRO_SECONDS);
   advance(dt);
   uniforms.uMix.value = Math.min(1, state.mix);
   readout(state.from + (state.to - state.from) * Math.min(1, state.mix));
-  if (autoCamera) {
-    const t = uniforms.uClock.value, angle = Math.sin(t * 0.13) * 0.24, distance = frameDistance() * (1 + 0.7 * Math.abs(angle) + 0.02 * Math.sin(t * 0.09));
-    camera.position.set(Math.sin(angle) * distance, TOP * (0.5 + 0.05 * Math.sin(t * 0.11)), Math.cos(angle) * distance);
-    camera.lookAt(focus);
-  } else controls.update();
+  if (autoCamera) cameraAt(uniforms.uClock.value);
+  else controls.update();
   renderer.render(scene, camera);
 });
-window.nyx = { state, jump, uniforms };
+window.nyx = { state, jump, uniforms, seek, ready: true, duration: INTRO_SECONDS + T * TICK_SECONDS + HOLD_SECONDS };

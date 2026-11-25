@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any
 
-from ..providers import Provider
+from ..providers import Provider, ProviderFatal
 from ..schema import Episode, Step, TraceWriter
 from .worlds import Runbook
 
@@ -82,6 +82,8 @@ def run_episode(
         started = time.time()
         try:
             result = provider.chat(model, messages, TOOLS, context_window=context_window, seed=seed, max_tokens=400)
+        except ProviderFatal:
+            raise
         except Exception as exc:  # e.g. the server rejecting a tool call that was cut off mid-JSON
             error = f"{type(exc).__name__}: {exc}"[:300]
             break
@@ -98,7 +100,7 @@ def run_episode(
         if sent_est > context_window or (result.prompt_tokens is not None and sent_est > result.prompt_tokens * 1.1 + 64):
             step.flags.append("truncated")
 
-        messages.append({"role": "assistant", "content": result.text, "tool_calls": result.tool_calls})
+        messages.append({"role": "assistant", "content": result.text, "tool_calls": result.tool_calls, "raw": result.raw})
         observations: list[str] = []
         done = False
         for call in result.tool_calls:
